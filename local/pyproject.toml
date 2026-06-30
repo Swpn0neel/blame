@@ -1,0 +1,19 @@
+[project]
+name = "blame"
+version = "0.1.0"
+description = "Extract contributor name/email/commit-count tables from any GitHub repo's history."
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "rich>=13.7",
+]
+
+[project.scripts]
+blame = "blame.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
