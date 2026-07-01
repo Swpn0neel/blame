@@ -21,10 +21,24 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
+const title = "blame — see who actually committed";
+const description =
+  "Paste a GitHub repo and get a table of every contributor: name, username, email, and commit count. Copy as markdown or download as CSV.";
+
 export const metadata: Metadata = {
-  title: "blame — see who actually committed",
-  description:
-    "Paste a GitHub repo and get a table of every contributor: name, username, email, and commit count. Copy as markdown or download as CSV.",
+  title,
+  description,
+  openGraph: {
+    title,
+    description,
+    type: "website",
+    siteName: "blame",
+  },
+  twitter: {
+    card: "summary",
+    title,
+    description,
+  },
 };
 
 export default function RootLayout({

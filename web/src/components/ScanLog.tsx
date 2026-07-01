@@ -66,7 +66,11 @@ function StepGlyph({ status }: { status: StepStatus }) {
 
 export function ScanLog({ steps }: { steps: ScanStep[] }) {
   return (
-    <ol className="flex flex-col gap-2.5 font-mono text-[0.8125rem]" aria-label="Scan progress">
+    <ol
+      className="flex flex-col gap-2.5 font-mono text-[0.8125rem]"
+      aria-label="Scan progress"
+      aria-live="polite"
+    >
       {steps.map((step) => (
         <li
           key={step.id}

@@ -1,3 +1,5 @@
+import { fuzzyMatch } from "./fuzzy";
+
 export type Contributor = {
   key: string;
   name: string;
@@ -10,6 +12,38 @@ export type Contributor = {
 };
 
 export type SortBy = "commits" | "name" | "recent";
+
+export type ContributorMatchField = "name" | "username" | "email";
+
+export type ContributorMatch = {
+  score: number;
+  fields: Partial<Record<ContributorMatchField, number[]>>;
+};
+
+/** Fuzzy-matches a query against a contributor's name/username/email independently.
+ * A contributor matches if ANY field matches; the score is the strongest single
+ * field match, so a great username hit outranks a mediocre coincidental one. */
+export function matchContributor(query: string, contributor: Contributor): ContributorMatch | null {
+  const candidates: { field: ContributorMatchField; text: string }[] = [
+    { field: "name", text: contributor.name },
+  ];
+  if (contributor.username) candidates.push({ field: "username", text: contributor.username });
+  if (contributor.email) candidates.push({ field: "email", text: contributor.email });
+
+  const fields: Partial<Record<ContributorMatchField, number[]>> = {};
+  let bestScore = -Infinity;
+
+  for (const { field, text } of candidates) {
+    const match = fuzzyMatch(query, text);
+    if (match) {
+      fields[field] = match.indices;
+      bestScore = Math.max(bestScore, match.score);
+    }
+  }
+
+  if (bestScore === -Infinity) return null;
+  return { score: bestScore, fields };
+}
 
 const NOREPLY_EMAIL_RE = /@users\.noreply\.github\.com$/i;
 
@@ -60,26 +94,40 @@ export function parseRepoInput(raw: string): { owner: string; repo: string } {
 }
 
 async function ghFetch(url: string, token: string | null): Promise<Response> {
-  const res = await fetch(url, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  } catch {
+    throw new GithubApiError(
+      "Couldn't reach GitHub — check your internet connection and try again.",
+      0,
+      false,
+    );
+  }
 
   if (!res.ok) {
+    const retryAfter = res.headers.get("retry-after");
     const rateLimited =
       (res.status === 403 || res.status === 429) &&
-      res.headers.get("x-ratelimit-remaining") === "0";
+      (res.headers.get("x-ratelimit-remaining") === "0" || retryAfter !== null);
 
     const message = rateLimited
-      ? "Hit GitHub's API rate limit. Add a personal access token below to keep going."
+      ? retryAfter
+        ? `Hit GitHub's rate limit. Try again in about ${retryAfter} seconds, or add a personal access token below.`
+        : "Hit GitHub's API rate limit. Add a personal access token below to keep going."
       : res.status === 404
         ? "Repository not found — check the URL, or add a token if it's private."
-        : res.status === 403
-          ? "GitHub API access denied for this repository."
-          : `GitHub API error (${res.status}).`;
+        : res.status === 409
+          ? "This repository doesn't have any commits yet."
+          : res.status === 403
+            ? "GitHub API access denied for this repository."
+            : `GitHub API error (${res.status}).`;
 
     throw new GithubApiError(message, res.status, rateLimited);
   }
@@ -106,16 +154,44 @@ type RawCommit = {
 
 const MAX_PAGES = 100;
 const PER_PAGE = 100;
+/** Above this estimated commit count, an unauthenticated scan is likely to
+ * run out of GitHub's 60 req/hr limit partway through (100 commits/page). */
+export const LARGE_REPO_WARNING_THRESHOLD = 5000;
 
-function parseNextLink(linkHeader: string | null): string | null {
+function parseLinkHeader(linkHeader: string | null, rel: "next" | "last"): string | null {
   if (!linkHeader) return null;
   const match = linkHeader
     .split(",")
     .map((part) => part.trim())
-    .find((part) => part.endsWith('rel="next"'));
+    .find((part) => part.endsWith(`rel="${rel}"`));
   if (!match) return null;
   const urlMatch = match.match(/<([^>]+)>/);
   return urlMatch ? urlMatch[1] : null;
+}
+
+/** Best-effort estimate of total commit count, via the `page` param on the
+ * Link header's `rel="last"` entry (per_page=1, so last page number == total
+ * commits). Returns null if it can't be determined (tiny repo, API hiccup). */
+export async function estimateCommitCount(
+  owner: string,
+  repo: string,
+  token: string | null,
+): Promise<number | null> {
+  try {
+    const res = await ghFetch(
+      `https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`,
+      token,
+    );
+    const lastUrl = parseLinkHeader(res.headers.get("link"), "last");
+    if (!lastUrl) {
+      const body = (await res.json()) as unknown[];
+      return body.length;
+    }
+    const page = new URL(lastUrl).searchParams.get("page");
+    return page ? parseInt(page, 10) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchAllCommits(
@@ -133,7 +209,7 @@ export async function fetchAllCommits(
     const batch = (await res.json()) as RawCommit[];
     commits.push(...batch);
     page += 1;
-    url = parseNextLink(res.headers.get("link"));
+    url = parseLinkHeader(res.headers.get("link"), "next");
     onProgress(commits.length, Boolean(url) && page >= MAX_PAGES);
     if (batch.length < PER_PAGE) break;
   }

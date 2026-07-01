@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -10,10 +9,10 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from .core import BlameError, gather_contributors
+from . import __version__
+from .core import BlameError, gather_contributors, sort_contributors
 
-_width = shutil.get_terminal_size(fallback=(120, 24)).columns
-console = Console(width=max(_width, 100))
+console = Console()
 err_console = Console(stderr=True)
 
 
@@ -32,9 +31,15 @@ err_console = Console(stderr=True)
 )
 @click.option(
     "--limit",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
-    help="Only show the top N contributors by commit count.",
+    help="Only show the top N contributors.",
+)
+@click.option(
+    "--sort-by",
+    type=click.Choice(["commits", "name", "recent"]),
+    default="commits",
+    help="Sort order: most commits (default), name, or most recently active.",
 )
 @click.option(
     "--has-email",
@@ -43,13 +48,19 @@ err_console = Console(stderr=True)
     help="Only show contributors with a real, public email address "
     "(drops anyone who only has a noreply.github.com address).",
 )
+@click.version_option(version=__version__, prog_name="blame")
 def main(
-    repo: str, merges: bool, output: Path | None, limit: int | None, has_email: bool
+    repo: str,
+    merges: bool,
+    output: Path | None,
+    limit: int | None,
+    sort_by: str,
+    has_email: bool,
 ) -> None:
     """Extract contributor name/email/commit-count history from REPO.
 
     REPO can be a full URL (https://github.com/owner/name), an SSH URL,
-    or shorthand owner/name.
+    a bare github.com/owner/name path, or shorthand owner/name.
     """
     try:
         with console.status(f"[bold cyan]Cloning and analyzing {repo}..."):
@@ -57,6 +68,9 @@ def main(
     except BlameError as e:
         err_console.print(f"[bold red]Error:[/bold red] {e}")
         sys.exit(1)
+    except KeyboardInterrupt:
+        err_console.print("\n[yellow]Cancelled.[/yellow]")
+        sys.exit(130)
 
     if not contributors:
         err_console.print("[yellow]No commits found.[/yellow]")
@@ -70,7 +84,9 @@ def main(
             )
             sys.exit(0)
 
-    if limit:
+    contributors = sort_contributors(contributors, sort_by)
+
+    if limit is not None:
         contributors = contributors[:limit]
 
     total_commits = sum(c.commits for c in contributors)

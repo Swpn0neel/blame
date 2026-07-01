@@ -177,6 +177,12 @@ export function ScanForm({
                 type={tokenVisible ? "text" : "password"}
                 value={tokenDraft}
                 onChange={(e) => setTokenDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleApplyToken();
+                  }
+                }}
                 placeholder="ghp_..."
                 autoComplete="off"
                 spellCheck={false}

@@ -3,7 +3,9 @@
 import { useState } from "react";
 import {
   GithubApiError,
+  LARGE_REPO_WARNING_THRESHOLD,
   aggregateContributors,
+  estimateCommitCount,
   fetchAllCommits,
   filterHasEmail,
   parseRepoInput,
@@ -39,6 +41,7 @@ export function BlameApp() {
   const [status, setStatus] = useState<Status>("idle");
   const [steps, setSteps] = useState<ScanStep[]>(initialSteps());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [warningMessage, setWarningMessage] = useState<string | null>(null);
   const [contributors, setContributors] = useState<Contributor[]>([]);
   const [columns, setColumns] = useState<Record<ColumnKey, boolean>>({
     username: true,
@@ -47,6 +50,7 @@ export function BlameApp() {
     lastCommit: false,
   });
   const [repoLabel, setRepoLabel] = useState("");
+  const [limit, setLimit] = useState<number | null>(null);
 
   function setStep(id: string, patch: Partial<ScanStep>) {
     setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
@@ -55,9 +59,11 @@ export function BlameApp() {
   async function handleRun(repoInput: string, options: ScanOptions) {
     setStatus("running");
     setErrorMessage(null);
+    setWarningMessage(null);
     setContributors([]);
     setSteps(initialSteps());
     setColumns(options.columns);
+    setLimit(options.limit);
 
     let owner = "";
     let repo = "";
@@ -70,6 +76,16 @@ export function BlameApp() {
       setRepoLabel(`${owner}-${repo}`);
       await withMinDuration(verifyRepoExists(owner, repo, options.token), 450);
       setStep("resolve", { status: "done" });
+
+      if (!options.token) {
+        const estimate = await estimateCommitCount(owner, repo, options.token);
+        if (estimate && estimate > LARGE_REPO_WARNING_THRESHOLD) {
+          setWarningMessage(
+            `This repo has roughly ${estimate.toLocaleString()} commits — an unauthenticated ` +
+              "scan may hit GitHub's rate limit partway through. Add a token below to avoid that.",
+          );
+        }
+      }
 
       setStep("fetch", { status: "active", detail: "0 commits" });
       const commits = await withMinDuration(
@@ -93,7 +109,6 @@ export function BlameApp() {
       );
       if (options.hasEmail) people = filterHasEmail(people);
       people = sortContributors(people, options.sortBy);
-      if (options.limit) people = people.slice(0, options.limit);
       setStep("aggregate", { status: "done", detail: `${people.length} people` });
 
       setStep("done", { status: "done" });
@@ -119,6 +134,14 @@ export function BlameApp() {
       {status !== "idle" && (
         <div className="flex flex-col gap-3 rounded-md border border-border-default bg-surface p-5">
           <ScanLog steps={steps} />
+          {warningMessage && (
+            <p
+              role="status"
+              className="rounded-sm border border-accent bg-accent-dim px-3 py-2 font-sans text-[0.8125rem] text-accent-bright"
+            >
+              {warningMessage}
+            </p>
+          )}
           {status === "error" && errorMessage && (
             <p
               role="alert"
@@ -131,7 +154,12 @@ export function BlameApp() {
       )}
 
       {status === "success" && (
-        <ResultsTable repoLabel={repoLabel} contributors={contributors} columns={columns} />
+        <ResultsTable
+          repoLabel={repoLabel}
+          contributors={contributors}
+          columns={columns}
+          limit={limit}
+        />
       )}
     </div>
   );

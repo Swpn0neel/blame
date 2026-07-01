@@ -4,8 +4,9 @@ import re
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 
 GIT_LOG_SEP = "\x1f"  # unit separator, unlikely to appear in author data
@@ -29,12 +30,13 @@ class Contributor:
 
 
 def normalize_repo_url(repo: str) -> str:
-    """Accept full URLs, owner/repo shorthand, or .git URLs and return a cloneable URL."""
+    """Accept full URLs, SSH URLs, bare github.com paths, or owner/repo shorthand
+    and return a cloneable URL."""
     repo = repo.strip()
-    if repo.startswith("git@") or repo.endswith(".git"):
+    if repo.startswith("git@") or "://" in repo:
         return repo
-    if repo.startswith("http://") or repo.startswith("https://"):
-        return repo
+    if repo.startswith("github.com/"):
+        return f"https://{repo}"
     # owner/repo shorthand
     if re.match(r"^[\w.-]+/[\w.-]+$", repo):
         return f"https://github.com/{repo}.git"
@@ -105,7 +107,18 @@ def parse_git_log(repo_dir: Path, include_merges: bool = False) -> list[Contribu
         if date > c.last_commit:
             c.last_commit = date
         # prefer the most recently used name spelling (first one seen, since newest-first)
-    return sorted(by_email.values(), key=lambda c: c.commits, reverse=True)
+    return list(by_email.values())
+
+
+SortBy = Literal["commits", "name", "recent"]
+
+
+def sort_contributors(contributors: list[Contributor], sort_by: SortBy = "commits") -> list[Contributor]:
+    if sort_by == "name":
+        return sorted(contributors, key=lambda c: c.name.lower())
+    if sort_by == "recent":
+        return sorted(contributors, key=lambda c: c.last_commit, reverse=True)
+    return sorted(contributors, key=lambda c: c.commits, reverse=True)
 
 
 def gather_contributors(repo: str, include_merges: bool = False) -> tuple[str, list[Contributor]]:

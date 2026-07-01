@@ -1,36 +1,36 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# blame — web app
 
-## Getting Started
+Single-page Next.js app: paste a GitHub repo, configure the scan, watch it run, get a contributor table. Reads data straight from `api.github.com` in the browser — no server, no API routes, nothing stored.
 
-First, run the development server:
+See the [root README](../README.md) for the full picture (this app alongside the `local/` CLI) and usage instructions.
+
+## Develop
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Stack
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Next.js 16 (App Router, Turbopack)
+- React 19
+- Tailwind CSS v4
+- No backend — GitHub REST API calls happen client-side; an optional personal access token is sent directly from the browser to `api.github.com` and never touches a server
 
-## Learn More
+## Structure
 
-To learn more about Next.js, take a look at the following resources:
+- `src/lib/github.ts` — GitHub API client, contributor aggregation, CSV/markdown export
+- `src/lib/fuzzy.ts` — DP-based fuzzy matcher powering the results table's search
+- `src/components/` — `ScanForm`, `ScanLog`, `ResultsTable`, `Background`, `BlameApp` (orchestrator)
+- `PRODUCT.md` / `DESIGN.md` at the repo root document the product intent and visual design system
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deploy
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Zero-config Next.js deploy (Vercel or any Next.js host):
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npx vercel deploy
+```

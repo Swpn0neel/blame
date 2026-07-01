@@ -16,11 +16,14 @@ python -m pip install -e .
 ```powershell
 blame owner/repo
 blame https://github.com/owner/repo
-blame owner/repo --merges          # include merge commits
-blame owner/repo --limit 10        # top 10 by commit count
-blame owner/repo --has-email       # only contributors with a real, public email
+blame github.com/owner/repo
+blame owner/repo --merges           # include merge commits
+blame owner/repo --sort-by name     # commits (default) / name / recent
+blame owner/repo --limit 10         # top 10 by commit count
+blame owner/repo --has-email        # only contributors with a real, public email
 blame owner/repo -o contributors.csv
 blame owner/repo -o contributors.json
+blame --version
 ```
 
 ## Notes

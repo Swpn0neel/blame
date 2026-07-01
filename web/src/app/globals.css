@@ -117,6 +117,13 @@ input:-webkit-autofill {
   caret-color: var(--ink);
 }
 
+/* Edge injects its own reveal/clear icons into password fields; we already
+   have a custom eye-toggle button, so suppress the native ones. */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
+
 /* Themed scrollbars: dark track matching the surface ladder, a muted thumb
    that brightens to the accent on hover so it never competes with content. */
 * {

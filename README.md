@@ -30,8 +30,11 @@ python -m pip install -e .
 ```powershell
 blame owner/repo
 blame https://github.com/owner/repo
-blame owner/repo --merges          # include merge commits (excluded by default)
-blame owner/repo --limit 10        # top 10 contributors by commit count
+blame github.com/owner/repo
+blame owner/repo --merges           # include merge commits (excluded by default)
+blame owner/repo --sort-by name     # commits (default) / name / recent
+blame owner/repo --limit 10         # top 10 contributors
+blame owner/repo --has-email        # only contributors with a real, public email
 blame owner/repo -o contributors.csv
 blame owner/repo -o contributors.json
 ```
@@ -39,7 +42,7 @@ blame owner/repo -o contributors.json
 Requires `git` on your `PATH`. Notes:
 
 - GitHub usernames are only filled in when the commit email is a `*@users.noreply.github.com` address — git itself has no concept of a GitHub username, so anything beyond that would require per-commit GitHub API calls.
-- Contributors are grouped by email. The same person committing under two different emails shows up as two rows.
+- Contributors are grouped purely by email address. The same person committing under two different emails shows up as two rows — there's no account-linking concept at the git level to merge them.
 
 ## `web/` — the app
 
@@ -75,4 +78,5 @@ npx vercel deploy
 ### Notes
 
 - Because it uses the GitHub API's commits endpoint rather than `git log --all`, it only sees history reachable from the repo's default branch — contributor counts can differ slightly from the CLI's full-history view.
+- Contributors are grouped by GitHub account when a commit is linked to one, falling back to email otherwise. This means the **same person can still appear as two rows** if some of their commits were made before they linked their GitHub account (or with an email GitHub can't match) and others after — GitHub's API, not this tool, decides that linkage. Worth a manual sanity-check before treating a "top contributor" ranking as authoritative, especially for recruitment/outreach use.
 - `PRODUCT.md` and `DESIGN.md` at the repo root document the product intent and visual design system behind the web app, for anyone extending it.
