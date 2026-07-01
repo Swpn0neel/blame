@@ -21,7 +21,7 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
-const title = "blame — see who actually committed";
+const title = "Blame";
 const description =
   "Paste a GitHub repo and get a table of every contributor: name, username, email, and commit count. Copy as markdown or download as CSV.";
 

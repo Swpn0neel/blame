@@ -2,6 +2,8 @@
 
 Answers one question for a GitHub repository: "who actually contributed, and how much?" Comes in two forms: a local CLI and a web app, both under the same name, `blame`. This project is mainly built to extract the mail id of contributors for recruitment/business purpose, but can be used for any purpose.
 
+![Preview](preview.png)
+
 | | [`local/`](local) | [`web/`](web) |
 |---|---|---|
 | Form | Python CLI | Next.js single-page app |
