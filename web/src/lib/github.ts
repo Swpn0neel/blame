@@ -1,5 +1,9 @@
 import { fuzzyMatch } from "./fuzzy";
 
+/** The canonical deployed URL — embedded cards always link back here rather
+ * than to the scanned repo, so an embed doubles as attribution/promotion. */
+export const BLAME_SITE_URL = "https://gitblame.vercel.app";
+
 export type Contributor = {
   key: string;
   name: string;
@@ -9,6 +13,7 @@ export type Contributor = {
   commits: number;
   firstCommit: string;
   lastCommit: string;
+  isBot: boolean;
 };
 
 export type SortBy = "commits" | "name" | "recent";
@@ -93,24 +98,7 @@ export function parseRepoInput(raw: string): { owner: string; repo: string } {
   return { owner: parts[0], repo: parts[1] };
 }
 
-async function ghFetch(url: string, token: string | null): Promise<Response> {
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
-  } catch {
-    throw new GithubApiError(
-      "Couldn't reach GitHub — check your internet connection and try again.",
-      0,
-      false,
-    );
-  }
-
+function interpretResponse(res: Response): Response {
   if (!res.ok) {
     const retryAfter = res.headers.get("retry-after");
     const rateLimited =
@@ -135,12 +123,99 @@ async function ghFetch(url: string, token: string | null): Promise<Response> {
   return res;
 }
 
+type GithubResource = "repo" | "commits";
+
+function githubDirectUrl(
+  owner: string,
+  repo: string,
+  resource: GithubResource,
+  params?: Record<string, string>,
+): string {
+  const base =
+    resource === "repo"
+      ? `https://api.github.com/repos/${owner}/${repo}`
+      : `https://api.github.com/repos/${owner}/${repo}/commits`;
+  const qs = params ? `?${new URLSearchParams(params).toString()}` : "";
+  return `${base}${qs}`;
+}
+
+function proxyUrl(
+  owner: string,
+  repo: string,
+  resource: GithubResource,
+  params?: Record<string, string>,
+): string {
+  return `/api/github?${new URLSearchParams({ owner, repo, resource, ...params }).toString()}`;
+}
+
+async function directFetch(url: string, token: string | null): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  } catch {
+    throw new GithubApiError(
+      "Couldn't reach GitHub — check your internet connection and try again.",
+      0,
+      false,
+    );
+  }
+  return interpretResponse(res);
+}
+
+/** Tries the same-origin proxy (which attaches the server's GITHUB_TOKEN, if
+ * configured). Returns null — signaling the caller to fall back to a direct,
+ * unauthenticated GitHub call — when the proxy has no server token (501),
+ * can't reach GitHub itself (502), or the network call fails outright. Any
+ * other status is a real GitHub response and is returned as-is. */
+async function tryProxy(url: string): Promise<Response | null> {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    return null;
+  }
+  if (res.status === 501 || res.status === 502) return null;
+  return res;
+}
+
+/** Dispatches a GitHub API read. With a visitor-supplied token, this is
+ * unchanged from before: a direct, client-side call straight to
+ * api.github.com. Without one, it tries the server-side proxy first (so the
+ * deployment's own GITHUB_TOKEN, if set, can raise the shared rate limit)
+ * and falls back to today's direct-unauthenticated call otherwise. */
+async function ghRequest(
+  owner: string,
+  repo: string,
+  resource: GithubResource,
+  token: string | null,
+  params?: Record<string, string>,
+): Promise<Response> {
+  // The proxy fallback only makes sense for browser-side callers hitting a
+  // same-origin relative URL. Server-side callers (the card image route)
+  // already have their own token decision made and should never loop back
+  // through this app's own API.
+  if (token || typeof window === "undefined") {
+    return directFetch(githubDirectUrl(owner, repo, resource, params), token);
+  }
+
+  const proxied = await tryProxy(proxyUrl(owner, repo, resource, params));
+  if (proxied) return interpretResponse(proxied);
+
+  return directFetch(githubDirectUrl(owner, repo, resource, params), null);
+}
+
 export async function verifyRepoExists(
   owner: string,
   repo: string,
   token: string | null,
 ): Promise<void> {
-  await ghFetch(`https://api.github.com/repos/${owner}/${repo}`, token);
+  await ghRequest(owner, repo, "repo", token);
 }
 
 type RawCommit = {
@@ -148,7 +223,7 @@ type RawCommit = {
   commit: {
     author: { name: string; email: string; date: string } | null;
   };
-  author: { login: string; id: number; avatar_url: string } | null;
+  author: { login: string; id: number; avatar_url: string; type: string } | null;
   parents: { sha: string }[];
 };
 
@@ -158,12 +233,12 @@ const PER_PAGE = 100;
  * run out of GitHub's 60 req/hr limit partway through (100 commits/page). */
 export const LARGE_REPO_WARNING_THRESHOLD = 5000;
 
-function parseLinkHeader(linkHeader: string | null, rel: "next" | "last"): string | null {
+function parseLastPageFromLinkHeader(linkHeader: string | null): string | null {
   if (!linkHeader) return null;
   const match = linkHeader
     .split(",")
     .map((part) => part.trim())
-    .find((part) => part.endsWith(`rel="${rel}"`));
+    .find((part) => part.endsWith(`rel="last"`));
   if (!match) return null;
   const urlMatch = match.match(/<([^>]+)>/);
   return urlMatch ? urlMatch[1] : null;
@@ -171,18 +246,17 @@ function parseLinkHeader(linkHeader: string | null, rel: "next" | "last"): strin
 
 /** Best-effort estimate of total commit count, via the `page` param on the
  * Link header's `rel="last"` entry (per_page=1, so last page number == total
- * commits). Returns null if it can't be determined (tiny repo, API hiccup). */
+ * commits). Only parses the page number out of that URL — never fetches it —
+ * so it works the same whether the request went through the proxy or direct.
+ * Returns null if it can't be determined (tiny repo, API hiccup). */
 export async function estimateCommitCount(
   owner: string,
   repo: string,
   token: string | null,
 ): Promise<number | null> {
   try {
-    const res = await ghFetch(
-      `https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`,
-      token,
-    );
-    const lastUrl = parseLinkHeader(res.headers.get("link"), "last");
+    const res = await ghRequest(owner, repo, "commits", token, { per_page: "1" });
+    const lastUrl = parseLastPageFromLinkHeader(res.headers.get("link"));
     if (!lastUrl) {
       const body = (await res.json()) as unknown[];
       return body.length;
@@ -194,6 +268,9 @@ export async function estimateCommitCount(
   }
 }
 
+/** Paginates by explicit page number rather than following the Link header's
+ * `rel="next"` URL — a followed Link URL points straight at api.github.com
+ * and would silently skip the proxy (and its token) on page 2 onward. */
 export async function fetchAllCommits(
   owner: string,
   repo: string,
@@ -201,30 +278,116 @@ export async function fetchAllCommits(
   onProgress: (commitsScanned: number, truncated: boolean) => void,
 ): Promise<RawCommit[]> {
   const commits: RawCommit[] = [];
-  let url: string | null = `https://api.github.com/repos/${owner}/${repo}/commits?per_page=${PER_PAGE}`;
-  let page = 0;
 
-  while (url && page < MAX_PAGES) {
-    const res = await ghFetch(url, token);
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await ghRequest(owner, repo, "commits", token, {
+      per_page: String(PER_PAGE),
+      page: String(page),
+    });
     const batch = (await res.json()) as RawCommit[];
     commits.push(...batch);
-    page += 1;
-    url = parseLinkHeader(res.headers.get("link"), "next");
-    onProgress(commits.length, Boolean(url) && page >= MAX_PAGES);
-    if (batch.length < PER_PAGE) break;
+    const hasMore = batch.length === PER_PAGE;
+    onProgress(commits.length, hasMore && page >= MAX_PAGES);
+    if (!hasMore) break;
   }
 
   return commits;
 }
 
-export function aggregateContributors(
-  commits: RawCommit[],
-  includeMerges: boolean,
-): Contributor[] {
+// --- Bot detection ---------------------------------------------------------
+//
+// GitHub's official author.type === "Bot" is fully reliable for accounts
+// registered through the GitHub Apps framework — verified directly against
+// live data: dependabot[bot], renovate[bot], and even AI agents like GitHub's
+// own copilot-swe-agent all come back with type "Bot". Use it as the primary
+// signal; it will never misfire.
+//
+// It does NOT cover automation that commits under an ordinary "User"-type
+// account. This is not a gap in this tool — it's a limit of GitHub's own
+// data model. Confirmed live: `actions-user` (the account some GitHub
+// Actions setups commit as) returns `"type": "User"` from GitHub's own
+// `/users/actions-user` endpoint. No metadata flag can distinguish that from
+// a human; GitHub itself doesn't. AI coding assistants that commit under a
+// personal-looking account (rather than a registered GitHub App) fall in the
+// same bucket. The only lever left is a maintained identity list — layered
+// below as: exact email → exact display name → exact username → username
+// pattern. It is inherently incomplete and needs updating as new cases turn
+// up; there is no purely technical way to make this 100% complete.
+const BOT_EMAILS = new Set([
+  "action@github.com", // GitHub Actions' conventional commit email
+  "actions@github.com",
+  "noreply@anthropic.com", // Claude Code / Claude commit attribution
+]);
+
+const BOT_NAMES = new Set([
+  "github action",
+  "github actions",
+  "github",
+  "claude",
+  "claude code",
+]);
+
+const BOT_USERNAMES = new Set([
+  // GitHub system / Actions-adjacent accounts (real "User"-type accounts)
+  "actions-user",
+  "github-actions",
+  "web-flow",
+  // AI coding assistants that may commit under a personal-looking account
+  // rather than a registered GitHub App
+  "claude",
+  "claude-ai",
+  "claude-code",
+  "copilot",
+  "cursor",
+  "cursor-ai",
+  "devin-ai-integration",
+  "codex",
+  "openai-codex",
+  "chatgpt",
+  "sweep-ai",
+  "codegen-sh",
+  // Common CI / dependency / code-quality bots not always suffixed "[bot]"
+  "snyk-bot",
+  "coveralls",
+  "codeclimate",
+  "gitter-badger",
+  "pyup-bot",
+  "googlebot",
+  "google-cloud-build",
+  "weblate",
+]);
+
+// Matches "bot" as a distinct token — [bot], -bot, _bot, bot- prefix, or the
+// whole username — without false-positiving on human names like "Robot" or
+// "Abbott" that merely contain the substring "bot".
+const BOT_USERNAME_PATTERN = /(^|[-_[])bot([\]_-]|$)/i;
+
+function looksLikeAutomatedAccount(name: string, username: string | null, email: string): boolean {
+  if (BOT_EMAILS.has(email.trim().toLowerCase())) return true;
+  if (BOT_NAMES.has(name.trim().toLowerCase())) return true;
+  if (username) {
+    const u = username.trim().toLowerCase();
+    if (BOT_USERNAMES.has(u)) return true;
+    if (BOT_USERNAME_PATTERN.test(u)) return true;
+  }
+  return false;
+}
+
+/** First letter of each of up to two words, for the fallback avatar shown
+ * when a contributor has no avatarUrl (e.g. an unmatched commit). */
+export function initialsFor(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "?";
+  const first = words[0][0] ?? "";
+  const second = words.length > 1 ? (words[words.length - 1][0] ?? "") : "";
+  return (first + second).toUpperCase();
+}
+
+export function aggregateContributors(commits: RawCommit[]): Contributor[] {
   const byKey = new Map<string, Contributor>();
 
   for (const commit of commits) {
-    if (!includeMerges && commit.parents.length > 1) continue;
+    if (commit.parents.length > 1) continue;
     if (!commit.commit.author) continue;
 
     const { name, email, date } = commit.commit.author;
@@ -245,6 +408,9 @@ export function aggregateContributors(
         commits: 1,
         firstCommit: date,
         lastCommit: date,
+        isBot:
+          commit.author?.type === "Bot" ||
+          looksLikeAutomatedAccount(name, commit.author?.login ?? null, email),
       });
     }
   }
@@ -254,6 +420,13 @@ export function aggregateContributors(
 
 export function filterHasEmail(list: Contributor[]): Contributor[] {
   return list.filter((c) => c.email);
+}
+
+/** GitHub flags an author's commit.author.type as "Bot" for genuine bot
+ * accounts (dependabot[bot], github-actions[bot], renovate[bot], etc). Only
+ * available when the commit is linked to a GitHub account. */
+export function filterBots(list: Contributor[]): Contributor[] {
+  return list.filter((c) => !c.isBot);
 }
 
 export function sortContributors(list: Contributor[], sortBy: SortBy): Contributor[] {
@@ -290,15 +463,15 @@ export function toMarkdownTable(
   list: Contributor[],
   columns: Record<ColumnKey, boolean>,
 ): string {
-  const headers = ["Name"];
+  const headers = ["#", "Name"];
   if (columns.username) headers.push("Username");
   if (columns.email) headers.push("Email");
   headers.push("Commits");
   if (columns.firstCommit) headers.push("First commit");
   if (columns.lastCommit) headers.push("Last commit");
 
-  const rows = list.map((c) => {
-    const cells = [c.name];
+  const rows = list.map((c, i) => {
+    const cells = [String(i + 1), c.name];
     if (columns.username) cells.push(c.username ? `@${c.username}` : "");
     if (columns.email) cells.push(c.email);
     cells.push(String(c.commits));
@@ -316,7 +489,7 @@ export function toMarkdownTable(
 }
 
 export function toCsv(list: Contributor[], columns: Record<ColumnKey, boolean>): string {
-  const headers = ["name"];
+  const headers = ["rank", "name"];
   if (columns.username) headers.push("username");
   if (columns.email) headers.push("email");
   headers.push("commits");
@@ -328,8 +501,8 @@ export function toCsv(list: Contributor[], columns: Record<ColumnKey, boolean>):
     return s;
   };
 
-  const rows = list.map((c) => {
-    const cells = [c.name];
+  const rows = list.map((c, i) => {
+    const cells = [String(i + 1), c.name];
     if (columns.username) cells.push(c.username ?? "");
     if (columns.email) cells.push(c.email);
     cells.push(String(c.commits));

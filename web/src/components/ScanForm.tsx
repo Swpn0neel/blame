@@ -1,19 +1,27 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { ColumnKey, SortBy } from "@/lib/github";
 import { COLUMN_LABELS } from "@/lib/github";
 
+const TOKEN_STORAGE_KEY = "blame:github-token";
+
 export type ScanOptions = {
-  includeMerges: boolean;
   hasEmail: boolean;
+  excludeBots: boolean;
+  embedEnabled: boolean;
   sortBy: SortBy;
   limit: number | null;
   columns: Record<ColumnKey, boolean>;
   token: string | null;
 };
 
-const COLUMN_KEYS: ColumnKey[] = ["username", "email", "firstCommit", "lastCommit"];
+const COLUMN_KEYS: ColumnKey[] = [
+  "username",
+  "email",
+  "firstCommit",
+  "lastCommit",
+];
 
 const fieldClass =
   "rounded-sm border border-border-strong bg-canvas font-mono text-[0.8125rem] text-ink placeholder:font-sans placeholder:text-ink-muted transition-colors focus:border-accent focus:outline-none focus:shadow-[var(--shadow-focus-ring)]";
@@ -22,10 +30,12 @@ function Pill({
   pressed,
   onClick,
   children,
+  className = "",
 }: {
   pressed: boolean;
   onClick: () => void;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
     <button
@@ -33,18 +43,24 @@ function Pill({
       role="switch"
       aria-checked={pressed}
       onClick={onClick}
-      className={`rounded-full border px-3.5 py-1.5 font-sans text-[0.8125rem] font-medium transition-colors duration-150 active:scale-[0.97] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] ${
+      className={`inline-flex items-center justify-center rounded-full border px-3.5 py-1.5 font-sans text-[0.8125rem] font-medium transition-colors duration-150 active:scale-[0.97] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] ${
         pressed
           ? "border-transparent bg-accent-dim text-accent-bright"
           : "border-border-strong bg-transparent text-ink-secondary hover:border-accent hover:bg-surface-raised"
-      }`}
+      } ${className}`}
     >
       {children}
     </button>
   );
 }
 
-function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) {
+function FieldLabel({
+  htmlFor,
+  children,
+}: {
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
   return (
     <label
       htmlFor={htmlFor}
@@ -58,7 +74,12 @@ function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: React.R
 function EyeIcon({ open }: { open: boolean }) {
   if (open) {
     return (
-      <svg viewBox="0 0 16 16" className="size-4" fill="none" aria-hidden="true">
+      <svg
+        viewBox="0 0 16 16"
+        className="size-4"
+        fill="none"
+        aria-hidden="true"
+      >
         <path
           d="M1.5 8S4 3 8 3s6.5 5 6.5 5-2.5 5-6.5 5-6.5-5-6.5-5Z"
           stroke="currentColor"
@@ -99,8 +120,10 @@ export function ScanForm({
   const [tokenDraft, setTokenDraft] = useState("");
   const [appliedToken, setAppliedToken] = useState<string | null>(null);
   const [tokenVisible, setTokenVisible] = useState(false);
-  const [includeMerges, setIncludeMerges] = useState(false);
+  const [rememberToken, setRememberToken] = useState(false);
   const [hasEmail, setHasEmail] = useState(false);
+  const [excludeBots, setExcludeBots] = useState(true);
+  const [embedEnabled, setEmbedEnabled] = useState(false);
   const [sortBy, setSortBy] = useState<SortBy>("commits");
   const [limit, setLimit] = useState("");
   const [columns, setColumns] = useState<Record<ColumnKey, boolean>>({
@@ -109,6 +132,21 @@ export function ScanForm({
     firstCommit: false,
     lastCommit: false,
   });
+
+  // Opt-in only: a remembered token lives in this browser's localStorage, never
+  // sent anywhere but api.github.com. Load it once on mount — localStorage
+  // doesn't exist during SSR, so this can't be a lazy useState initializer.
+  /* eslint-disable react-hooks/set-state-in-effect -- one-time hydration from a browser-only API, not a derived-state anti-pattern */
+  useEffect(() => {
+    const saved = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (saved) {
+      setTokenDraft(saved);
+      setAppliedToken(saved);
+      setRememberToken(true);
+      setShowToken(true);
+    }
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const tokenIsDirty = tokenDraft.trim() !== (appliedToken ?? "");
 
@@ -119,14 +157,31 @@ export function ScanForm({
   function handleApplyToken() {
     const trimmed = tokenDraft.trim();
     setAppliedToken(trimmed || null);
+    if (rememberToken) {
+      if (trimmed) window.localStorage.setItem(TOKEN_STORAGE_KEY, trimmed);
+      else window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+    }
+  }
+
+  function handleToggleRemember() {
+    setRememberToken((prev) => {
+      const next = !prev;
+      if (next && appliedToken) {
+        window.localStorage.setItem(TOKEN_STORAGE_KEY, appliedToken);
+      } else if (!next) {
+        window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
+      return next;
+    });
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const parsedLimit = limit.trim() ? Math.max(1, parseInt(limit, 10)) : null;
     onRun(repoInput, {
-      includeMerges,
       hasEmail,
+      excludeBots,
+      embedEnabled,
       sortBy,
       limit: parsedLimit,
       columns,
@@ -169,7 +224,9 @@ export function ScanForm({
 
       {showToken && (
         <div className="flex flex-col gap-1.5">
-          <FieldLabel htmlFor={tokenId}>GitHub personal access token (optional)</FieldLabel>
+          <FieldLabel htmlFor={tokenId}>
+            GitHub personal access token (optional)
+          </FieldLabel>
           <div className="flex max-w-md gap-2">
             <div className="relative flex-1">
               <input
@@ -183,7 +240,7 @@ export function ScanForm({
                     handleApplyToken();
                   }
                 }}
-                placeholder="ghp_..."
+                placeholder="github_pat..."
                 autoComplete="off"
                 spellCheck={false}
                 className={`${fieldClass} h-10 w-full pl-3 pr-9`}
@@ -206,10 +263,22 @@ export function ScanForm({
               Apply
             </button>
           </div>
+
+          <div className="flex items-center gap-2">
+            <Pill pressed={rememberToken} onClick={handleToggleRemember}>
+              {rememberToken ? "Remembered" : "Remember token"}
+            </Pill>
+          </div>
+
           <p className="flex max-w-md items-center gap-1.5 font-sans text-[0.8125rem]">
             {appliedToken && !tokenIsDirty ? (
               <span className="flex items-center gap-1.5 text-accent-bright">
-                <svg viewBox="0 0 16 16" className="size-3.5 shrink-0" fill="none" aria-hidden="true">
+                <svg
+                  viewBox="0 0 16 16"
+                  className="size-3.5 shrink-0"
+                  fill="none"
+                  aria-hidden="true"
+                >
                   <path
                     d="M3 8.5L6.2 11.5L13 4.5"
                     stroke="currentColor"
@@ -218,11 +287,15 @@ export function ScanForm({
                     strokeLinejoin="round"
                   />
                 </svg>
-                Token applied — requests will use it
+                Token applied —{" "}
+                {rememberToken
+                  ? "remembered in this browser"
+                  : "cleared on reload"}
               </span>
             ) : (
               <span className="text-ink-muted">
-                Sent directly to api.github.com from your browser. Never stored.
+                Sent directly to api.github.com from your browser. Never stored
+                unless you turn on “Remember token.”
               </span>
             )}
           </p>
@@ -233,19 +306,31 @@ export function ScanForm({
         <div className="grid grid-cols-2 gap-x-4 gap-y-4 sm:flex sm:flex-wrap sm:items-end sm:gap-x-6">
           <div className="flex flex-col gap-1.5">
             <span className="font-sans text-[0.8125rem] font-medium text-ink-secondary">
-              Merge commits
+              Public email
             </span>
-            <Pill pressed={includeMerges} onClick={() => setIncludeMerges((v) => !v)}>
-              {includeMerges ? "Included" : "Excluded"}
+            <Pill pressed={hasEmail} onClick={() => setHasEmail((v) => !v)}>
+              {hasEmail ? "Required" : "Optional"}
             </Pill>
           </div>
 
           <div className="flex flex-col gap-1.5">
             <span className="font-sans text-[0.8125rem] font-medium text-ink-secondary">
-              Public email
+              Bots
             </span>
-            <Pill pressed={hasEmail} onClick={() => setHasEmail((v) => !v)}>
-              {hasEmail ? "Required" : "Optional"}
+            <Pill
+              pressed={excludeBots}
+              onClick={() => setExcludeBots((v) => !v)}
+            >
+              {excludeBots ? "Excluded" : "Included"}
+            </Pill>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="font-sans text-[0.8125rem] font-medium text-ink-secondary">
+              Embed image
+            </span>
+            <Pill pressed={embedEnabled} onClick={() => setEmbedEnabled((v) => !v)}>
+              {embedEnabled ? "Enabled" : "Disabled"}
             </Pill>
           </div>
 
@@ -281,9 +366,14 @@ export function ScanForm({
           <span className="font-sans text-[0.8125rem] font-medium text-ink-secondary">
             Columns
           </span>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
             {COLUMN_KEYS.map((key) => (
-              <Pill key={key} pressed={columns[key]} onClick={() => toggleColumn(key)}>
+              <Pill
+                key={key}
+                pressed={columns[key]}
+                onClick={() => toggleColumn(key)}
+                className="w-full sm:w-auto"
+              >
                 {COLUMN_LABELS[key]}
               </Pill>
             ))}

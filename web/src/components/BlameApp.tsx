@@ -7,6 +7,7 @@ import {
   aggregateContributors,
   estimateCommitCount,
   fetchAllCommits,
+  filterBots,
   filterHasEmail,
   parseRepoInput,
   sortContributors,
@@ -50,7 +51,9 @@ export function BlameApp() {
     lastCommit: false,
   });
   const [repoLabel, setRepoLabel] = useState("");
+  const [repoPath, setRepoPath] = useState<{ owner: string; repo: string } | null>(null);
   const [limit, setLimit] = useState<number | null>(null);
+  const [embedEnabled, setEmbedEnabled] = useState(false);
 
   function setStep(id: string, patch: Partial<ScanStep>) {
     setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
@@ -64,6 +67,7 @@ export function BlameApp() {
     setSteps(initialSteps());
     setColumns(options.columns);
     setLimit(options.limit);
+    setEmbedEnabled(options.embedEnabled);
 
     let owner = "";
     let repo = "";
@@ -74,6 +78,7 @@ export function BlameApp() {
       owner = parsed.owner;
       repo = parsed.repo;
       setRepoLabel(`${owner}-${repo}`);
+      setRepoPath({ owner, repo });
       await withMinDuration(verifyRepoExists(owner, repo, options.token), 450);
       setStep("resolve", { status: "done" });
 
@@ -104,10 +109,11 @@ export function BlameApp() {
 
       setStep("aggregate", { status: "active" });
       let people = await withMinDuration(
-        Promise.resolve(aggregateContributors(commits, options.includeMerges)),
+        Promise.resolve(aggregateContributors(commits)),
         350,
       );
       if (options.hasEmail) people = filterHasEmail(people);
+      if (options.excludeBots) people = filterBots(people);
       people = sortContributors(people, options.sortBy);
       setStep("aggregate", { status: "done", detail: `${people.length} people` });
 
@@ -153,12 +159,14 @@ export function BlameApp() {
         </div>
       )}
 
-      {status === "success" && (
+      {status === "success" && repoPath && (
         <ResultsTable
           repoLabel={repoLabel}
+          repoPath={repoPath}
           contributors={contributors}
           columns={columns}
           limit={limit}
+          embedEnabled={embedEnabled}
         />
       )}
     </div>

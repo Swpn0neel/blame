@@ -27,6 +27,7 @@ local/dist/
 .DS_Store
 *.pem
 .serena/
+.claude/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -3,10 +3,12 @@
 import Image from "next/image";
 import { useMemo, useState } from "react";
 import {
+  BLAME_SITE_URL,
   type ColumnKey,
   type Contributor,
   type ContributorMatch,
   downloadFile,
+  initialsFor,
   matchContributor,
   toCsv,
   toMarkdownTable,
@@ -15,6 +17,8 @@ import {
 function formatDate(iso: string): string {
   return iso.slice(0, 10);
 }
+
+const PAGE_SIZE = 25;
 
 const actionButtonClass =
   "inline-flex size-9 shrink-0 items-center justify-center rounded-sm border border-border-default bg-surface text-ink transition-colors duration-150 hover:border-border-strong hover:bg-surface-raised active:scale-[0.98] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus-ring)]";
@@ -84,14 +88,43 @@ function ClearIcon() {
   );
 }
 
-function Avatar({ src }: { src: string | null }) {
+function ChevronIcon({ direction }: { direction: "left" | "right" }) {
+  return (
+    <svg viewBox="0 0 16 16" className="size-3.5" fill="none" aria-hidden="true">
+      <path
+        d={direction === "left" ? "M10 3.5L5.5 8L10 12.5" : "M6 3.5L10.5 8L6 12.5"}
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Heroicons "photo" outline icon (MIT licensed, tailwindlabs/heroicons). */
+function ImageIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M2.25 15.75l5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
+      />
+    </svg>
+  );
+}
+
+function Avatar({ src, name }: { src: string | null; name: string }) {
   const [errored, setErrored] = useState(false);
   if (!src || errored) {
     return (
       <span
-        className="size-6 shrink-0 rounded-full border border-border-default bg-surface-raised"
+        className="flex size-6 shrink-0 items-center justify-center rounded-full border border-border-default bg-accent-dim font-sans text-[0.5625rem] font-medium text-accent-bright"
         aria-hidden="true"
-      />
+      >
+        {initialsFor(name)}
+      </span>
     );
   }
   return (
@@ -131,17 +164,27 @@ function HighlightedText({ text, indices }: { text: string; indices?: number[] }
 
 export function ResultsTable({
   repoLabel,
+  repoPath,
   contributors,
   columns,
   limit,
+  embedEnabled,
 }: {
   repoLabel: string;
+  repoPath: { owner: string; repo: string };
   contributors: Contributor[];
   columns: Record<ColumnKey, boolean>;
   limit: number | null;
+  embedEnabled: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const [embedCopied, setEmbedCopied] = useState(false);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [previewLoaded, setPreviewLoaded] = useState(false);
+  const [previewErrored, setPreviewErrored] = useState(false);
+
+  const cardUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/api/card/${repoPath.owner}/${repoPath.repo}`;
 
   // "Show top N" is a display default, not a search boundary: search always
   // reaches the full contributor list, so someone outside the top N is still
@@ -152,6 +195,15 @@ export function ResultsTable({
     [contributors, limit],
   );
   const totalCommits = limitedContributors.reduce((sum, c) => sum + c.commits, 0);
+
+  // Rank always reflects each contributor's position in the overall (sorted)
+  // list, not their position within the currently displayed/search-reordered
+  // rows — otherwise searching would relabel everyone as 1, 2, 3, ...
+  const rankByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    contributors.forEach((c, i) => map.set(c.key, i + 1));
+    return map;
+  }, [contributors]);
 
   const matches = useMemo(() => {
     const map = new Map<string, ContributorMatch>();
@@ -176,11 +228,30 @@ export function ResultsTable({
     return [...matched, ...unmatched];
   }, [contributors, limitedContributors, matches, isSearching]);
 
+  const pageCount = Math.max(1, Math.ceil(displayedContributors.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pagedContributors = useMemo(
+    () => displayedContributors.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [displayedContributors, currentPage],
+  );
+
+  function handleSearchChange(value: string) {
+    setQuery(value);
+    setPage(1);
+  }
+
   async function handleCopyMarkdown() {
     const markdown = toMarkdownTable(limitedContributors, columns);
     await navigator.clipboard.writeText(markdown);
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+  }
+
+  async function handleCopyEmbed() {
+    const snippet = `[![Contributors](${cardUrl})](${BLAME_SITE_URL})`;
+    await navigator.clipboard.writeText(snippet);
+    setEmbedCopied(true);
+    setTimeout(() => setEmbedCopied(false), 1800);
   }
 
   function handleDownloadCsv() {
@@ -207,7 +278,7 @@ export function ResultsTable({
       <input
         type="text"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => handleSearchChange(e.target.value)}
         placeholder="Search"
         autoComplete="off"
         spellCheck={false}
@@ -217,7 +288,7 @@ export function ResultsTable({
       {query && (
         <button
           type="button"
-          onClick={() => setQuery("")}
+          onClick={() => handleSearchChange("")}
           aria-label="Clear search"
           className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-ink-muted transition-colors hover:text-ink"
         >
@@ -268,6 +339,17 @@ export function ResultsTable({
           >
             <DownloadIcon />
           </button>
+          {embedEnabled && (
+            <button
+              type="button"
+              onClick={handleCopyEmbed}
+              className={actionButtonClass}
+              aria-label={embedCopied ? "Embed snippet copied" : "Copy README embed snippet"}
+              title={embedCopied ? "Embed snippet copied" : "Copy README embed snippet"}
+            >
+              {embedCopied ? <CheckIcon /> : <ImageIcon />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -277,6 +359,9 @@ export function ResultsTable({
         <table className="w-full border-collapse text-left">
           <thead>
             <tr className="bg-surface-raised">
+              <th className="px-4 py-3 text-right font-sans text-[1rem] font-medium text-ink-secondary">
+                #
+              </th>
               <th className="px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
                 Name
               </th>
@@ -306,9 +391,10 @@ export function ResultsTable({
             </tr>
           </thead>
           <tbody>
-            {displayedContributors.map((c) => {
+            {pagedContributors.map((c) => {
               const match = matches.get(c.key);
               const isDimmed = isSearching && !match;
+              const rank = rankByKey.get(c.key) ?? 0;
               return (
                 <tr
                   key={c.key}
@@ -316,9 +402,12 @@ export function ResultsTable({
                     isDimmed ? "opacity-40" : ""
                   }`}
                 >
+                  <td className="px-4 py-3 text-right font-mono text-[0.8125rem] text-ink-muted">
+                    {rank}
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
-                      <Avatar src={c.avatarUrl} />
+                      <Avatar src={c.avatarUrl} name={c.name} />
                       <span className="font-sans text-[0.9375rem] text-ink">
                         <HighlightedText text={c.name} indices={match?.fields.name} />
                       </span>
@@ -363,6 +452,70 @@ export function ResultsTable({
           </tbody>
         </table>
       </div>
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            aria-label="Previous page"
+            className="inline-flex size-8 items-center justify-center rounded-sm border border-border-default bg-surface text-ink transition-colors duration-150 hover:border-border-strong hover:bg-surface-raised active:scale-[0.98] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
+          >
+            <ChevronIcon direction="left" />
+          </button>
+          <span className="font-mono text-[0.8125rem] text-ink-secondary">
+            Page {currentPage} of {pageCount}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            disabled={currentPage === pageCount}
+            aria-label="Next page"
+            className="inline-flex size-8 items-center justify-center rounded-sm border border-border-default bg-surface text-ink transition-colors duration-150 hover:border-border-strong hover:bg-surface-raised active:scale-[0.98] focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus-ring)] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
+          >
+            <ChevronIcon direction="right" />
+          </button>
+        </div>
+      )}
+
+      {embedEnabled && (
+        <div className="flex flex-col gap-2 rounded-md border border-border-default bg-surface p-4">
+          <span className="font-sans text-[0.8125rem] font-medium text-ink-secondary">
+            Embed preview
+          </span>
+
+          {!previewLoaded && !previewErrored && (
+            <div className="flex h-56 w-full flex-col items-center justify-center gap-3 rounded-sm border border-border-default bg-canvas">
+              <span className="relative flex size-4 items-center justify-center" aria-hidden="true">
+                <span className="size-2.5 rounded-full bg-accent shadow-[var(--shadow-focus-ring)] motion-safe:animate-[pulse-dot_1.4s_ease-in-out_infinite]" />
+              </span>
+              <span className="font-mono text-[0.8125rem] text-ink-muted">
+                Generating preview…
+              </span>
+            </div>
+          )}
+
+          {previewErrored && (
+            <div className="flex h-32 w-full items-center justify-center rounded-sm border border-danger bg-danger-dim">
+              <span className="font-sans text-[0.8125rem] text-danger">
+                Couldn&apos;t generate the preview. Try again in a moment.
+              </span>
+            </div>
+          )}
+
+          {/* eslint-disable-next-line @next/next/no-img-element -- dimensions are dynamic (repo-dependent), can't be known ahead of time for next/image */}
+          <img
+            src={cardUrl}
+            alt={`Contributor card preview for ${repoPath.owner}/${repoPath.repo}`}
+            onLoad={() => setPreviewLoaded(true)}
+            onError={() => setPreviewErrored(true)}
+            className={`h-auto max-w-full rounded-sm border border-border-default ${
+              previewLoaded ? "block" : "hidden"
+            }`}
+          />
+        </div>
+      )}
     </section>
   );
 }
