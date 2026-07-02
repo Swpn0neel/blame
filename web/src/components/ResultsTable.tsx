@@ -359,32 +359,32 @@ export function ResultsTable({
         <table className="w-full border-collapse text-left">
           <thead>
             <tr className="bg-surface-raised">
-              <th className="px-4 py-3 text-right font-sans text-[1rem] font-medium text-ink-secondary">
+              <th className="whitespace-nowrap px-4 py-3 text-right font-sans text-[1rem] font-medium text-ink-secondary">
                 #
               </th>
-              <th className="px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
+              <th className="whitespace-nowrap px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
                 Name
               </th>
               {columns.username && (
-                <th className="px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
+                <th className="whitespace-nowrap px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
                   Username
                 </th>
               )}
               {columns.email && (
-                <th className="px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
+                <th className="whitespace-nowrap px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
                   Email
                 </th>
               )}
-              <th className="px-4 py-3 text-right font-sans text-[1rem] font-medium text-ink-secondary">
+              <th className="whitespace-nowrap px-4 py-3 text-right font-sans text-[1rem] font-medium text-ink-secondary">
                 Commits
               </th>
               {columns.firstCommit && (
-                <th className="px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
+                <th className="whitespace-nowrap px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
                   First commit
                 </th>
               )}
               {columns.lastCommit && (
-                <th className="px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
+                <th className="whitespace-nowrap px-4 py-3 font-sans text-[1rem] font-medium text-ink-secondary">
                   Last commit
                 </th>
               )}
@@ -402,19 +402,19 @@ export function ResultsTable({
                     isDimmed ? "opacity-40" : ""
                   }`}
                 >
-                  <td className="px-4 py-3 text-right font-mono text-[0.8125rem] text-ink-muted">
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-[0.8125rem] text-ink-muted">
                     {rank}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       <Avatar src={c.avatarUrl} name={c.name} />
-                      <span className="font-sans text-[0.9375rem] text-ink">
+                      <span className="whitespace-nowrap font-sans text-[0.9375rem] text-ink">
                         <HighlightedText text={c.name} indices={match?.fields.name} />
                       </span>
                     </div>
                   </td>
                   {columns.username && (
-                    <td className="px-4 py-3 font-mono text-[0.8125rem] text-ink-secondary">
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-[0.8125rem] text-ink-secondary">
                       {c.username ? (
                         <>
                           @<HighlightedText text={c.username} indices={match?.fields.username} />
@@ -425,7 +425,7 @@ export function ResultsTable({
                     </td>
                   )}
                   {columns.email && (
-                    <td className="px-4 py-3 font-mono text-[0.8125rem] text-ink-secondary">
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-[0.8125rem] text-ink-secondary">
                       {c.email ? (
                         <HighlightedText text={c.email} indices={match?.fields.email} />
                       ) : (
@@ -433,16 +433,16 @@ export function ResultsTable({
                       )}
                     </td>
                   )}
-                  <td className="px-4 py-3 text-right font-mono text-[0.8125rem] text-accent-bright">
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-mono text-[0.8125rem] text-accent-bright">
                     {c.commits.toLocaleString()}
                   </td>
                   {columns.firstCommit && (
-                    <td className="px-4 py-3 font-mono text-[0.8125rem] text-ink-muted">
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-[0.8125rem] text-ink-muted">
                       {formatDate(c.firstCommit)}
                     </td>
                   )}
                   {columns.lastCommit && (
-                    <td className="px-4 py-3 font-mono text-[0.8125rem] text-ink-muted">
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-[0.8125rem] text-ink-muted">
                       {formatDate(c.lastCommit)}
                     </td>
                   )}
